@@ -51,6 +51,40 @@ detect_mtproto() {
         return 0
     fi
     
+    # 检测直接进程运行的MTProto代理
+    if ps -ef | grep -q "[m]tproto-proxy"; then
+        echo -e "${GREEN}检测到直接进程运行的MTProto代理${NC}"
+        USE_DOCKER="n"
+        
+        # 获取进程命令行
+        PROCESS_CMD=$(ps -ef | grep "[m]tproto-proxy" | head -n 1)
+        echo -e "检测到进程: ${YELLOW}$(echo $PROCESS_CMD | awk '{print $8" "$9" ..."}')${NC}"
+        
+        # 尝试提取端口 (-H 参数)
+        PORT=$(echo "$PROCESS_CMD" | grep -oP -- "-H\s+\K\d+")
+        if [ -n "$PORT" ]; then
+            echo -e "检测到端口: ${YELLOW}$PORT${NC}"
+        else
+            # 尝试提取端口 (-p 参数)
+            PORT=$(echo "$PROCESS_CMD" | grep -oP -- "-p\s+\K\d+")
+            if [ -n "$PORT" ]; then
+                echo -e "检测到端口: ${YELLOW}$PORT${NC}"
+            fi
+        fi
+        
+        # 尝试提取密钥 (-S 参数)
+        SECRET=$(echo "$PROCESS_CMD" | grep -oP -- "-S\s+\K[a-zA-Z0-9]+")
+        if [ -n "$SECRET" ]; then
+            echo -e "检测到密钥: ${YELLOW}$SECRET${NC}"
+        fi
+        
+        # 设置状态获取命令
+        STATUS_CMD="netstat -tuln | grep -c :$PORT || ss -tuln | grep -c :$PORT"
+        BANDWIDTH_CMD="echo 0"
+        
+        return 0
+    fi
+    
     # 检测systemd服务
     if systemctl list-units --type=service | grep -q "mtproto"; then
         echo -e "${GREEN}检测到系统服务运行的MTProto代理${NC}"
@@ -75,7 +109,7 @@ detect_mtproto() {
         fi
         
         # 设置状态获取命令
-        STATUS_CMD="ss -tuln | grep -c :$PORT"
+        STATUS_CMD="netstat -tuln | grep -c :$PORT || ss -tuln | grep -c :$PORT"
         BANDWIDTH_CMD="echo 0"
         
         return 0
