@@ -10,6 +10,86 @@ YELLOW='\033[0;33m'
 RED='\033[0;31m'
 NC='\033[0m' # 无颜色
 
+# 脚本正文开始前先处理命令行参数
+while getopts "r:h" opt; do
+  case $opt in
+    r)
+      NODE_ID=$OPTARG
+      echo -e "${GREEN}正在重启节点 ID: $NODE_ID${NC}"
+      restart_node
+      ;;
+    h)
+      echo -e "用法: $0 [-r node_id] [-h]"
+      echo -e "  -r node_id    重启指定节点ID"
+      echo -e "  -h            显示帮助信息"
+      exit 0
+      ;;
+    \?)
+      echo "无效的选项: -$OPTARG" >&2
+      exit 1
+      ;;
+  esac
+done
+
+# 重启节点函数
+restart_node() {
+    echo -e "${BLUE}=========================================${NC}"
+    echo -e "${GREEN}重启节点${NC}"
+    echo -e "${BLUE}=========================================${NC}\n"
+    
+    # 检查是否使用Docker
+    if command -v docker &> /dev/null && docker ps | grep -q "mtproto"; then
+        # Docker版本重启
+        CONTAINER_NAME=$(docker ps | grep mtproto | head -n 1 | awk '{print $NF}')
+        if [ -z "$CONTAINER_NAME" ]; then
+            CONTAINER_NAME="mtproto-proxy"
+        fi
+        
+        echo -e "${GREEN}正在重启Docker容器 $CONTAINER_NAME...${NC}"
+        docker restart $CONTAINER_NAME
+        echo -e "${GREEN}重启完成！${NC}"
+    else
+        # 非Docker版本重启
+        echo -e "${GREEN}检测系统服务...${NC}"
+        if systemctl list-units --type=service | grep -q "mtproto"; then
+            SERVICE_NAME=$(systemctl list-units --type=service | grep mtproto | head -n 1 | awk '{print $1}')
+            echo -e "${GREEN}正在重启服务 $SERVICE_NAME...${NC}"
+            systemctl restart $SERVICE_NAME
+            echo -e "${GREEN}重启完成！${NC}"
+        else
+            echo -e "${YELLOW}未检测到MTProto服务，尝试通过进程重启...${NC}"
+            PID=$(ps -ef | grep "[m]tproto-proxy" | head -n 1 | awk '{print $2}')
+            if [ -n "$PID" ]; then
+                echo -e "${GREEN}正在终止进程 $PID...${NC}"
+                kill -15 $PID
+                sleep 2
+                
+                # 获取启动命令并重新启动
+                CMD=$(ps -fp $PID -o cmd= 2>/dev/null || echo "")
+                if [ -n "$CMD" ]; then
+                    echo -e "${GREEN}正在重新启动...${NC}"
+                    nohup $CMD > /dev/null 2>&1 &
+                    echo -e "${GREEN}重启完成！${NC}"
+                else
+                    echo -e "${RED}无法获取启动命令，请手动重启。${NC}"
+                fi
+            else
+                echo -e "${RED}未找到MTProto代理进程，请手动重启。${NC}"
+            fi
+        fi
+    fi
+    
+    # 重启上报脚本
+    if [ -f "/usr/local/bin/report_status.sh" ]; then
+        echo -e "${GREEN}正在执行状态上报脚本...${NC}"
+        /usr/local/bin/report_status.sh
+        echo -e "${GREEN}状态上报已执行${NC}"
+    fi
+    
+    echo -e "\n${GREEN}节点重启操作完成！${NC}"
+    exit 0
+}
+
 # 卸载上报脚本函数
 uninstall_report_script() {
     echo -e "${BLUE}=========================================${NC}"
@@ -52,14 +132,18 @@ echo -e "${BLUE}=========================================${NC}"
 echo -e "${GREEN}Telegram MTProto代理节点配置脚本${NC}"
 echo -e "${BLUE}=========================================${NC}\n"
 
-# 询问是否已经安装MTProto代理
+# 询问操作类型
 echo -e "请选择操作:"
 echo -e "1) 全新安装MTProto代理和状态上报脚本"
 echo -e "2) 仅安装状态上报脚本（已有MTProto代理）"
 echo -e "3) 卸载状态上报脚本"
-read -p "请选择 [1/2/3]: " INSTALL_TYPE
+echo -e "4) 重启节点"
+read -p "请选择 [1/2/3/4]: " INSTALL_TYPE
+
 if [ "$INSTALL_TYPE" = "3" ]; then
     uninstall_report_script
+elif [ "$INSTALL_TYPE" = "4" ]; then
+    restart_node
 fi
 
 if [ "$INSTALL_TYPE" != "1" ] && [ "$INSTALL_TYPE" != "2" ]; then
@@ -381,114 +465,200 @@ if [[ "$USE_DOCKER" == "y" || "$USE_DOCKER" == "Y" ]]; then
     cat > /usr/local/bin/report_status.sh << EOF
 #!/bin/bash
 
-# 获取连接数
-CONN_COUNT=\$(docker exec $CONTAINER_NAME curl -s http://localhost:$STATS_PORT/stats | grep -oP '(?<="active_users":)[0-9]+')
-if [ -z "\$CONN_COUNT" ]; then
-    CONN_COUNT=0
-fi
+# 设置API密钥和节点ID
+API_KEY="$API_KEY"
+NODE_ID=$NODE_ID
 
-# 获取带宽使用量（字节）
-BANDWIDTH=\$(docker exec $CONTAINER_NAME curl -s http://localhost:$STATS_PORT/stats | grep -oP '(?<="bytes":)[0-9]+')
-if [ -z "\$BANDWIDTH" ]; then
-    BANDWIDTH=0
-fi
+# 创建重启API服务器
+start_restart_server() {
+    # 检查是否已经有服务器在运行
+    if netstat -tuln | grep -q ':8080'; then
+        return
+    fi
+    
+    # 创建简单的重启监听服务
+    while true; do
+        echo -e "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"success\"}" | nc -l -p 8080 > /tmp/restart_request.tmp
+        
+        # 检查请求是否包含重启命令
+        if grep -q "restart" /tmp/restart_request.tmp; then
+            # 验证API密钥
+            if grep -q "\\"api_key\\":\\"$API_KEY\\"" /tmp/restart_request.tmp; then
+                echo "收到重启命令，正在重启..."
+                
+                # 重启Docker容器
+                docker restart $CONTAINER_NAME
+                
+                # 获取连接数
+                CONN_COUNT=\$(docker exec $CONTAINER_NAME curl -s http://localhost:$STATS_PORT/stats | grep -oP '(?<="active_users":)[0-9]+')
+                if [ -z "\$CONN_COUNT" ]; then
+                    CONN_COUNT=0
+                fi
+                
+                # 获取流量统计
+                STAT_COMMAND="docker exec $CONTAINER_NAME ss -antp | grep mtproto | grep -v LISTEN"
+                BANDWIDTH=\$(docker exec $CONTAINER_NAME cat /var/log/mtproto.log 2>/dev/null | grep "Written" | awk '{sum+=\$2} END {print sum}')
+                if [ -z "\$BANDWIDTH" ]; then
+                    BANDWIDTH=0
+                fi
+                
+                # 计算实时带宽
+                CURRENT_TIME=\$(date +%s)
+                LAST_BANDWIDTH_FILE="/tmp/last_bandwidth_$NODE_ID.txt"
+                LAST_TIME_FILE="/tmp/last_time_$NODE_ID.txt"
+                
+                if [ -f "\$LAST_BANDWIDTH_FILE" ] && [ -f "\$LAST_TIME_FILE" ]; then
+                    LAST_BANDWIDTH=\$(cat \$LAST_BANDWIDTH_FILE)
+                    LAST_TIME=\$(cat \$LAST_TIME_FILE)
+                    
+                    # 计算带宽差值和时间差
+                    BANDWIDTH_DIFF=\$((\$BANDWIDTH - \$LAST_BANDWIDTH))
+                    TIME_DIFF=\$((\$CURRENT_TIME - \$LAST_TIME))
+                    
+                    if [ \$TIME_DIFF -gt 0 ]; then
+                        # 计算实时带宽 (bytes/s)
+                        REAL_BANDWIDTH=\$((\$BANDWIDTH_DIFF / \$TIME_DIFF))
+                    else
+                        REAL_BANDWIDTH=0
+                    fi
+                else
+                    REAL_BANDWIDTH=0
+                fi
+                
+                # 保存当前数据供下次计算
+                echo "\$BANDWIDTH" > "\$LAST_BANDWIDTH_FILE"
+                echo "\$CURRENT_TIME" > "\$LAST_TIME_FILE"
+                
+                # 当前时间
+                TIMESTAMP=\$(date +"%Y-%m-%d %H:%M:%S")
+                
+                # 记录日志
+                echo "[\$TIMESTAMP] 连接数: \$CONN_COUNT, 总带宽: \$BANDWIDTH bytes, 实时带宽: \$REAL_BANDWIDTH bytes/s" >> /var/log/mtproto_report.log
+                
+                # 发送状态报告
+                curl -s -X POST $API_URL \\
+                  -H "Content-Type: application/json" \\
+                  -d '{
+                    "node_id": '$NODE_ID',
+                    "conn_count": '\$CONN_COUNT',
+                    "bandwidth": '\$BANDWIDTH',
+                    "real_bandwidth": '\$REAL_BANDWIDTH',
+                    "api_key": "'$API_KEY'",
+                    "node_name": "$NAME",
+                    "host": "$HOST",
+                    "port": $PORT,
+                    "secret": "$SECRET",
+                    "user_data": []
+                  }' > /dev/null
+            fi
+        fi
+    done
+}
 
-# 当前时间
-TIMESTAMP=\$(date +"%Y-%m-%d %H:%M:%S")
-
-# 记录日志
-echo "[\$TIMESTAMP] 连接数: \$CONN_COUNT, 带宽: \$BANDWIDTH bytes" >> /var/log/mtproto_report.log
-
-# 发送状态报告
-curl -s -X POST $API_URL \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "node_id": $NODE_ID,
-    "conn_count": '\$CONN_COUNT',
-    "bandwidth": '\$BANDWIDTH',
-    "api_key": "$API_KEY",
-    "node_name": "$NAME",
-    "host": "$HOST",
-    "port": $PORT,
-    "secret": "$SECRET",
-    "user_data": []
-  }' > /dev/null
+# 后台启动重启服务器
+start_restart_server &
 EOF
 else
     # 非Docker版本的上报脚本
     cat > /usr/local/bin/report_status.sh << EOF
 #!/bin/bash
 
-# 获取连接数
-CONN_COUNT=\$($STATUS_CMD)
-if [ -z "\$CONN_COUNT" ]; then
-    CONN_COUNT=0
-fi
+# 设置API密钥和节点ID
+API_KEY="$API_KEY"
+NODE_ID=$NODE_ID
 
-# 获取带宽使用量（字节）
-# 尝试使用多种方法获取带宽信息
-if [ -f "/var/log/mtproto_bandwidth.log" ]; then
-    # 如果存在带宽日志文件，读取上次记录的值
-    LAST_BANDWIDTH=\$(cat /var/log/mtproto_bandwidth.log 2>/dev/null || echo "0")
-else
-    LAST_BANDWIDTH="0"
-fi
-
-# 尝试从网络接口获取带宽信息
-INTERFACE=\$(ip route | grep default | awk '{print \$5}')
-if [ -n "\$INTERFACE" ]; then
-    # 获取当前网络接口的接收和发送字节数
-    RX_BYTES=\$(cat /sys/class/net/\$INTERFACE/statistics/rx_bytes 2>/dev/null || echo "0")
-    TX_BYTES=\$(cat /sys/class/net/\$INTERFACE/statistics/tx_bytes 2>/dev/null || echo "0")
+# 创建重启API服务器
+start_restart_server() {
+    # 检查是否已经有服务器在运行
+    if netstat -tuln | grep -q ':8080'; then
+        return
+    fi
     
-    # 计算总带宽
-    CURRENT_BANDWIDTH=\$((RX_BYTES + TX_BYTES))
-    
-    # 如果是首次运行，使用当前值
-    if [ "\$LAST_BANDWIDTH" = "0" ]; then
-        BANDWIDTH=0
-    else
-        # 计算增量
-        BANDWIDTH=\$((CURRENT_BANDWIDTH - LAST_BANDWIDTH))
-        # 如果是负数（可能是由于系统重启），则使用当前值
-        if [ \$BANDWIDTH -lt 0 ]; then
-            BANDWIDTH=\$CURRENT_BANDWIDTH
+    # 创建简单的重启监听服务
+    while true; do
+        echo -e "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"success\"}" | nc -l -p 8080 > /tmp/restart_request.tmp
+        
+        # 检查请求是否包含重启命令
+        if grep -q "restart" /tmp/restart_request.tmp; then
+            # 验证API密钥
+            if grep -q "\\"api_key\\":\\"$API_KEY\\"" /tmp/restart_request.tmp; then
+                echo "收到重启命令，正在重启..."
+                
+                # 重启MTProto服务
+                systemctl restart mtproto-proxy
+                
+                # 获取连接数
+                CONN_COUNT=\$(curl -s http://localhost:$STATS_PORT/stats | grep -oP '(?<="active_users":)[0-9]+')
+                if [ -z "\$CONN_COUNT" ]; then
+                    CONN_COUNT=0
+                fi
+                
+                # 获取流量统计
+                STAT_COMMAND="ss -antp | grep mtproto | grep -v LISTEN"
+                BANDWIDTH=\$(cat /var/log/mtproto.log 2>/dev/null | grep "Written" | awk '{sum+=\$2} END {print sum}')
+                if [ -z "\$BANDWIDTH" ]; then
+                    BANDWIDTH=0
+                fi
+                
+                # 计算实时带宽
+                CURRENT_TIME=\$(date +%s)
+                LAST_BANDWIDTH_FILE="/tmp/last_bandwidth_$NODE_ID.txt"
+                LAST_TIME_FILE="/tmp/last_time_$NODE_ID.txt"
+                
+                if [ -f "\$LAST_BANDWIDTH_FILE" ] && [ -f "\$LAST_TIME_FILE" ]; then
+                    LAST_BANDWIDTH=\$(cat \$LAST_BANDWIDTH_FILE)
+                    LAST_TIME=\$(cat \$LAST_TIME_FILE)
+                    
+                    # 计算带宽差值和时间差
+                    BANDWIDTH_DIFF=\$((\$BANDWIDTH - \$LAST_BANDWIDTH))
+                    TIME_DIFF=\$((\$CURRENT_TIME - \$LAST_TIME))
+                    
+                    if [ \$TIME_DIFF -gt 0 ]; then
+                        # 计算实时带宽 (bytes/s)
+                        REAL_BANDWIDTH=\$((\$BANDWIDTH_DIFF / \$TIME_DIFF))
+                    else
+                        REAL_BANDWIDTH=0
+                    fi
+                else
+                    REAL_BANDWIDTH=0
+                fi
+                
+                # 保存当前数据供下次计算
+                echo "\$BANDWIDTH" > "\$LAST_BANDWIDTH_FILE"
+                echo "\$CURRENT_TIME" > "\$LAST_TIME_FILE"
+                
+                # 当前时间
+                TIMESTAMP=\$(date +"%Y-%m-%d %H:%M:%S")
+                
+                # 记录日志
+                echo "[\$TIMESTAMP] 连接数: \$CONN_COUNT, 总带宽: \$BANDWIDTH bytes, 实时带宽: \$REAL_BANDWIDTH bytes/s" >> /var/log/mtproto_report.log
+                
+                # 发送状态报告
+                curl -s -X POST $API_URL \\
+                  -H "Content-Type: application/json" \\
+                  -d '{
+                    "node_id": '$NODE_ID',
+                    "conn_count": '\$CONN_COUNT',
+                    "bandwidth": '\$BANDWIDTH',
+                    "real_bandwidth": '\$REAL_BANDWIDTH',
+                    "api_key": "'$API_KEY'",
+                    "node_name": "$NAME",
+                    "host": "$HOST",
+                    "port": $PORT,
+                    "secret": "$SECRET",
+                    "user_data": []
+                  }' > /dev/null
+            fi
         fi
-    fi
-    
-    # 保存当前值供下次使用
-    echo \$CURRENT_BANDWIDTH > /var/log/mtproto_bandwidth.log
-else
-    # 如果无法获取网络接口，使用备用方法
-    BANDWIDTH=\$($BANDWIDTH_CMD)
-    if [ -z "\$BANDWIDTH" ]; then
-        BANDWIDTH=0
-    fi
-fi
+    done
+}
 
-# 当前时间
-TIMESTAMP=\$(date +"%Y-%m-%d %H:%M:%S")
-
-# 记录日志
-echo "[\$TIMESTAMP] 连接数: \$CONN_COUNT, 带宽: \$BANDWIDTH bytes" >> /var/log/mtproto_report.log
-
-# 发送状态报告
-curl -s -X POST $API_URL \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "node_id": $NODE_ID,
-    "conn_count": '\$CONN_COUNT',
-    "bandwidth": '\$BANDWIDTH',
-    "api_key": "$API_KEY",
-    "node_name": "$NAME",
-    "host": "$HOST",
-    "port": $PORT,
-    "secret": "$SECRET",
-    "user_data": []
-  }' > /dev/null
+# 后台启动重启服务器
+start_restart_server &
 EOF
 fi
 
+# 设置脚本权限
 chmod +x /usr/local/bin/report_status.sh
 
 # 创建日志文件
@@ -534,7 +704,12 @@ TEST_RESULT=$(curl -s -X POST "$API_URL" \
     \"node_id\": $NODE_ID,
     \"conn_count\": 0,
     \"bandwidth\": 0,
+    \"real_bandwidth\": 0,
     \"api_key\": \"$API_KEY\",
+    \"node_name\": \"$NAME\",
+    \"host\": \"$HOST\",
+    \"port\": $PORT,
+    \"secret\": \"$SECRET\",
     \"user_data\": []
   }")
 
@@ -543,4 +718,43 @@ if [[ "$TEST_RESULT" == *"success"* ]]; then
 else
     echo -e "${RED}连接测试失败! 请检查API密钥和Bot API地址是否正确。${NC}"
     echo -e "错误信息: $TEST_RESULT"
-fi 
+fi
+
+# 创建cron任务，每分钟运行一次
+echo "* * * * * /usr/local/bin/report_status.sh" > /tmp/mtproto_cron
+crontab /tmp/mtproto_cron
+rm /tmp/mtproto_cron
+
+# 设置日志文件权限
+touch /var/log/mtproto_report.log
+chmod 644 /var/log/mtproto_report.log
+
+echo -e "\n${GREEN}状态上报脚本创建成功！${NC}"
+echo -e "每分钟将自动上报节点状态。\n"
+
+# 显示连接信息
+echo -e "\n${GREEN}MTProto Proxy 已成功安装！${NC}"
+echo -e "代理信息如下：\n"
+echo -e "服务器地址: ${YELLOW}$HOST${NC}"
+echo -e "端口: ${YELLOW}$PORT${NC}"
+echo -e "密钥: ${YELLOW}$SECRET${NC}"
+echo -e "链接: ${YELLOW}https://t.me/proxy?server=$HOST&port=$PORT&secret=$SECRET${NC}\n"
+
+# 如果是Docker安装，显示Docker命令
+if [[ "$USE_DOCKER" == "y" || "$USE_DOCKER" == "Y" ]]; then
+    echo -e "Docker 容器名称: ${YELLOW}$CONTAINER_NAME${NC}"
+    echo -e "查看日志: ${YELLOW}docker logs $CONTAINER_NAME${NC}"
+    echo -e "重启代理: ${YELLOW}docker restart $CONTAINER_NAME${NC}"
+else
+    echo -e "服务名称: ${YELLOW}mtproto-proxy${NC}"
+    echo -e "查看日志: ${YELLOW}journalctl -u mtproto-proxy${NC}"
+    echo -e "重启代理: ${YELLOW}systemctl restart mtproto-proxy${NC}"
+fi
+
+echo -e "\n服务已启动，状态上报已设置。节点ID: ${YELLOW}$NODE_ID${NC}\n"
+echo -e "请将以下信息告知机器人管理员："
+echo -e "节点ID: ${YELLOW}$NODE_ID${NC}"
+echo -e "节点名称: ${YELLOW}$NAME${NC}"
+echo -e "主机地址: ${YELLOW}$HOST${NC}"
+echo -e "端口: ${YELLOW}$PORT${NC}"
+echo -e "密钥: ${YELLOW}$SECRET${NC}\n" 
