@@ -10,10 +10,62 @@ YELLOW='\033[0;33m'
 RED='\033[0;31m'
 NC='\033[0m' # 无颜色
 
+# 卸载上报脚本函数
+uninstall_report_script() {
+    echo -e "${BLUE}=========================================${NC}"
+    echo -e "${GREEN}卸载状态上报脚本${NC}"
+    echo -e "${BLUE}=========================================${NC}\n"
+    
+    # 移除定时任务
+    echo -e "${GREEN}正在移除定时任务...${NC}"
+    (crontab -l 2>/dev/null | grep -v "report_status.sh") | crontab -
+    
+    # 停止并移除脚本
+    echo -e "${GREEN}正在移除上报脚本...${NC}"
+    if [ -f "/usr/local/bin/report_status.sh" ]; then
+        rm -f /usr/local/bin/report_status.sh
+        echo -e "上报脚本已移除"
+    else
+        echo -e "${YELLOW}未找到上报脚本${NC}"
+    fi
+    
+    # 询问是否保留日志
+    read -p "是否保留状态上报日志? (y/n) [n]: " KEEP_LOG
+    if [[ "$KEEP_LOG" != "y" && "$KEEP_LOG" != "Y" ]]; then
+        if [ -f "/var/log/mtproto_report.log" ]; then
+            rm -f /var/log/mtproto_report.log
+            echo -e "状态上报日志已移除"
+        else
+            echo -e "${YELLOW}未找到状态上报日志${NC}"
+        fi
+    else
+        echo -e "状态上报日志已保留在 /var/log/mtproto_report.log"
+    fi
+    
+    echo -e "\n${GREEN}卸载完成！状态上报脚本和相关定时任务已移除。${NC}"
+    echo -e "${YELLOW}注意：此操作不会卸载MTProto代理本身，仅移除状态上报功能。${NC}"
+    exit 0
+}
+
 # 打印欢迎信息
 echo -e "${BLUE}=========================================${NC}"
 echo -e "${GREEN}Telegram MTProto代理节点配置脚本${NC}"
 echo -e "${BLUE}=========================================${NC}\n"
+
+# 询问是否已经安装MTProto代理
+echo -e "请选择操作:"
+echo -e "1) 全新安装MTProto代理和状态上报脚本"
+echo -e "2) 仅安装状态上报脚本（已有MTProto代理）"
+echo -e "3) 卸载状态上报脚本"
+read -p "请选择 [1/2/3]: " INSTALL_TYPE
+if [ "$INSTALL_TYPE" = "3" ]; then
+    uninstall_report_script
+fi
+
+if [ "$INSTALL_TYPE" != "1" ] && [ "$INSTALL_TYPE" != "2" ]; then
+    echo -e "${RED}无效的选择，默认选择1${NC}"
+    INSTALL_TYPE="1"
+fi
 
 # 自动检测MTProto代理信息
 detect_mtproto() {
@@ -119,16 +171,6 @@ detect_mtproto() {
     echo -e "${YELLOW}未能自动检测到MTProto代理信息，请手动输入${NC}"
     return 1
 }
-
-# 询问是否已经安装MTProto代理
-echo -e "请选择操作:"
-echo -e "1) 全新安装MTProto代理和状态上报脚本"
-echo -e "2) 仅安装状态上报脚本（已有MTProto代理）"
-read -p "请选择 [1/2]: " INSTALL_TYPE
-if [ "$INSTALL_TYPE" != "1" ] && [ "$INSTALL_TYPE" != "2" ]; then
-    echo -e "${RED}无效的选择，默认选择1${NC}"
-    INSTALL_TYPE="1"
-fi
 
 # 自动获取系统信息
 HOST=$(curl -s ifconfig.me)
