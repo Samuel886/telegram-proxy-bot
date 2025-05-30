@@ -127,7 +127,40 @@ detect_mtproto() {
         # 尝试提取密钥 (-S 参数)
         SECRET=$(echo "$PROCESS_CMD" | grep -oP -- "-S\s+\K[a-zA-Z0-9]+")
         if [ -n "$SECRET" ]; then
-            echo -e "检测到密钥: ${YELLOW}$SECRET${NC}"
+            echo -e "检测到基本密钥: ${YELLOW}$SECRET${NC}"
+            
+            # 提取域名参数，可能用于构建完整密钥
+            DOMAIN=$(echo "$PROCESS_CMD" | grep -oP -- "--domain\s+\K[a-zA-Z0-9.-]+")
+            if [ -n "$DOMAIN" ]; then
+                echo -e "检测到伪装域名: ${YELLOW}$DOMAIN${NC}"
+                
+                # 检查是否需要在密钥前添加'ee'
+                if [[ "$SECRET" != ee* ]]; then
+                    SECRET_START="ee"
+                else
+                    SECRET_START=""
+                fi
+                
+                # 将域名转换为十六进制并附加到密钥
+                if command -v xxd &> /dev/null; then
+                    DOMAIN_HEX=$(echo -n "$DOMAIN" | xxd -p | tr -d '\n')
+                    FULL_SECRET="${SECRET_START}${SECRET}${DOMAIN_HEX}"
+                    echo -e "构建完整密钥: ${YELLOW}$FULL_SECRET${NC}"
+                    SECRET=$FULL_SECRET
+                fi
+            fi
+        else
+            # 尝试从文件或环境中提取密钥
+            for CONFIG_FILE in /etc/mtproto-proxy.conf /etc/mtproxy.conf $(find /etc -name "*mtpro*" -type f 2>/dev/null); do
+                if [ -f "$CONFIG_FILE" ]; then
+                    FILE_SECRET=$(grep -oP '(?<=SECRET=|secret=)[a-zA-Z0-9]+' "$CONFIG_FILE")
+                    if [ -n "$FILE_SECRET" ]; then
+                        SECRET=$FILE_SECRET
+                        echo -e "从配置文件提取密钥: ${YELLOW}$SECRET${NC}"
+                        break
+                    fi
+                fi
+            done
         fi
         
         # 设置状态获取命令
