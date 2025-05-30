@@ -15,6 +15,77 @@ echo -e "${BLUE}=========================================${NC}"
 echo -e "${GREEN}Telegram MTProto代理节点配置脚本${NC}"
 echo -e "${BLUE}=========================================${NC}\n"
 
+# 自动检测MTProto代理信息
+detect_mtproto() {
+    echo -e "${GREEN}正在尝试自动检测MTProto代理信息...${NC}"
+    
+    # 检测是否使用Docker运行
+    if command -v docker &> /dev/null && docker ps | grep -q "mtproto"; then
+        echo -e "${GREEN}检测到Docker运行的MTProto代理${NC}"
+        USE_DOCKER="y"
+        
+        # 尝试获取容器名称
+        CONTAINER_NAME=$(docker ps | grep mtproto | head -n 1 | awk '{print $NF}')
+        if [ -z "$CONTAINER_NAME" ]; then
+            CONTAINER_NAME="mtproto-proxy"
+        else
+            echo -e "检测到容器名称: ${YELLOW}$CONTAINER_NAME${NC}"
+        fi
+        
+        # 尝试获取端口信息
+        PORT_INFO=$(docker port "$CONTAINER_NAME" | grep -oP '\d+$' | head -n 1)
+        if [ -n "$PORT_INFO" ]; then
+            PORT=$PORT_INFO
+            echo -e "检测到端口: ${YELLOW}$PORT${NC}"
+        fi
+        
+        # 尝试获取密钥
+        DOCKER_ENV=$(docker inspect "$CONTAINER_NAME" | grep -oP '(?<="SECRET=)[^"]+')
+        if [ -n "$DOCKER_ENV" ]; then
+            SECRET=$DOCKER_ENV
+            echo -e "检测到密钥: ${YELLOW}$SECRET${NC}"
+        fi
+        
+        # 设置默认stats端口
+        STATS_PORT="2398"
+        return 0
+    fi
+    
+    # 检测systemd服务
+    if systemctl list-units --type=service | grep -q "mtproto"; then
+        echo -e "${GREEN}检测到系统服务运行的MTProto代理${NC}"
+        USE_DOCKER="n"
+        
+        # 获取服务名称
+        SERVICE_NAME=$(systemctl list-units --type=service | grep mtproto | head -n 1 | awk '{print $1}')
+        echo -e "检测到服务: ${YELLOW}$SERVICE_NAME${NC}"
+        
+        # 尝试从配置文件获取端口和密钥
+        if [ -f "/etc/mtproto-proxy.conf" ]; then
+            PORT=$(grep -oP '(?<=PORT=)\d+' /etc/mtproto-proxy.conf)
+            SECRET=$(grep -oP '(?<=SECRET=)[a-zA-Z0-9]+' /etc/mtproto-proxy.conf)
+            
+            if [ -n "$PORT" ]; then
+                echo -e "检测到端口: ${YELLOW}$PORT${NC}"
+            fi
+            
+            if [ -n "$SECRET" ]; then
+                echo -e "检测到密钥: ${YELLOW}$SECRET${NC}"
+            fi
+        fi
+        
+        # 设置状态获取命令
+        STATUS_CMD="ss -tuln | grep -c :$PORT"
+        BANDWIDTH_CMD="echo 0"
+        
+        return 0
+    fi
+    
+    # 如果找不到MTProto代理
+    echo -e "${YELLOW}未能自动检测到MTProto代理信息，请手动输入${NC}"
+    return 1
+}
+
 # 询问是否已经安装MTProto代理
 echo -e "请选择操作:"
 echo -e "1) 全新安装MTProto代理和状态上报脚本"
@@ -58,36 +129,72 @@ NODE_ID=${NODE_ID:-0}
 # 如果是仅安装上报脚本，需要手动输入MTProto配置
 if [ "$INSTALL_TYPE" = "2" ]; then
     echo -e "\n请输入您现有MTProto代理的信息:"
-    read -p "MTProto端口 [443]: " PORT
-    PORT=${PORT:-443}
     
-    read -p "MTProto密钥 (必填): " SECRET
-    while [ -z "$SECRET" ]; do
-        echo -e "${RED}密钥不能为空!${NC}"
+    # 尝试自动检测MTProto信息
+    detect_mtproto
+    
+    # 如果未提供PORT或SECRET，则请求用户输入
+    if [ -z "$PORT" ]; then
+        read -p "MTProto端口 [443]: " PORT
+        PORT=${PORT:-443}
+    else
+        echo -e "使用检测到的端口: ${YELLOW}$PORT${NC}"
+        read -p "是否使用此端口? (y/n) [y]: " USE_DETECTED_PORT
+        if [[ "$USE_DETECTED_PORT" != "y" && "$USE_DETECTED_PORT" != "Y" && "$USE_DETECTED_PORT" != "" ]]; then
+            read -p "MTProto端口: " PORT
+            PORT=${PORT:-443}
+        fi
+    fi
+    
+    if [ -z "$SECRET" ]; then
         read -p "MTProto密钥 (必填): " SECRET
-    done
+        while [ -z "$SECRET" ]; do
+            echo -e "${RED}密钥不能为空!${NC}"
+            read -p "MTProto密钥 (必填): " SECRET
+        done
+    else
+        echo -e "使用检测到的密钥: ${YELLOW}$SECRET${NC}"
+        read -p "是否使用此密钥? (y/n) [y]: " USE_DETECTED_SECRET
+        if [[ "$USE_DETECTED_SECRET" != "y" && "$USE_DETECTED_SECRET" != "Y" && "$USE_DETECTED_SECRET" != "" ]]; then
+            read -p "MTProto密钥: " SECRET
+            while [ -z "$SECRET" ]; do
+                echo -e "${RED}密钥不能为空!${NC}"
+                read -p "MTProto密钥: " SECRET
+            done
+        fi
+    fi
     
     # 询问Docker和Stats端口
-    read -p "是否使用Docker运行MTProto代理? (y/n) [y]: " USE_DOCKER
-    USE_DOCKER=${USE_DOCKER:-y}
+    if [ -z "$USE_DOCKER" ]; then
+        read -p "是否使用Docker运行MTProto代理? (y/n) [y]: " USE_DOCKER
+        USE_DOCKER=${USE_DOCKER:-y}
+    fi
     
     if [[ "$USE_DOCKER" == "y" || "$USE_DOCKER" == "Y" ]]; then
-        read -p "Docker容器名称 [mtproto-proxy]: " CONTAINER_NAME
-        CONTAINER_NAME=${CONTAINER_NAME:-mtproto-proxy}
-        
-        read -p "Stats端口 [2398]: " STATS_PORT
-        STATS_PORT=${STATS_PORT:-2398}
-    else
-        read -p "MTProto代理状态命令 (能够获取连接数的命令): " STATUS_CMD
-        if [ -z "$STATUS_CMD" ]; then
-            echo -e "${YELLOW}未提供状态命令，将无法获取准确的连接数。${NC}"
-            STATUS_CMD="echo 0"
+        if [ -z "$CONTAINER_NAME" ]; then
+            read -p "Docker容器名称 [mtproto-proxy]: " CONTAINER_NAME
+            CONTAINER_NAME=${CONTAINER_NAME:-mtproto-proxy}
         fi
         
-        read -p "MTProto代理带宽命令 (能够获取带宽的命令): " BANDWIDTH_CMD
+        if [ -z "$STATS_PORT" ]; then
+            read -p "Stats端口 [2398]: " STATS_PORT
+            STATS_PORT=${STATS_PORT:-2398}
+        fi
+    else
+        if [ -z "$STATUS_CMD" ]; then
+            read -p "MTProto代理状态命令 (能够获取连接数的命令): " STATUS_CMD
+            if [ -z "$STATUS_CMD" ]; then
+                echo -e "${YELLOW}未提供状态命令，将使用简单的端口检测。${NC}"
+                STATUS_CMD="ss -tuln | grep -c :$PORT"
+            fi
+        fi
+        
         if [ -z "$BANDWIDTH_CMD" ]; then
-            echo -e "${YELLOW}未提供带宽命令，将无法获取准确的带宽使用量。${NC}"
-            BANDWIDTH_CMD="echo 0"
+            read -p "MTProto代理带宽命令 (能够获取带宽的命令): " BANDWIDTH_CMD
+            if [ -z "$BANDWIDTH_CMD" ]; then
+                echo -e "${YELLOW}未提供带宽命令，将无法获取准确的带宽使用量。${NC}"
+                BANDWIDTH_CMD="echo 0"
+            fi
         fi
     fi
 fi
