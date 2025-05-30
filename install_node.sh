@@ -393,9 +393,44 @@ if [ -z "\$CONN_COUNT" ]; then
 fi
 
 # 获取带宽使用量（字节）
-BANDWIDTH=\$($BANDWIDTH_CMD)
-if [ -z "\$BANDWIDTH" ]; then
-    BANDWIDTH=0
+# 尝试使用多种方法获取带宽信息
+if [ -f "/var/log/mtproto_bandwidth.log" ]; then
+    # 如果存在带宽日志文件，读取上次记录的值
+    LAST_BANDWIDTH=\$(cat /var/log/mtproto_bandwidth.log 2>/dev/null || echo "0")
+else
+    LAST_BANDWIDTH="0"
+fi
+
+# 尝试从网络接口获取带宽信息
+INTERFACE=\$(ip route | grep default | awk '{print \$5}')
+if [ -n "\$INTERFACE" ]; then
+    # 获取当前网络接口的接收和发送字节数
+    RX_BYTES=\$(cat /sys/class/net/\$INTERFACE/statistics/rx_bytes 2>/dev/null || echo "0")
+    TX_BYTES=\$(cat /sys/class/net/\$INTERFACE/statistics/tx_bytes 2>/dev/null || echo "0")
+    
+    # 计算总带宽
+    CURRENT_BANDWIDTH=\$((RX_BYTES + TX_BYTES))
+    
+    # 如果是首次运行，使用当前值
+    if [ "\$LAST_BANDWIDTH" = "0" ]; then
+        BANDWIDTH=0
+    else
+        # 计算增量
+        BANDWIDTH=\$((CURRENT_BANDWIDTH - LAST_BANDWIDTH))
+        # 如果是负数（可能是由于系统重启），则使用当前值
+        if [ \$BANDWIDTH -lt 0 ]; then
+            BANDWIDTH=\$CURRENT_BANDWIDTH
+        fi
+    fi
+    
+    # 保存当前值供下次使用
+    echo \$CURRENT_BANDWIDTH > /var/log/mtproto_bandwidth.log
+else
+    # 如果无法获取网络接口，使用备用方法
+    BANDWIDTH=\$($BANDWIDTH_CMD)
+    if [ -z "\$BANDWIDTH" ]; then
+        BANDWIDTH=0
+    fi
 fi
 
 # 当前时间
