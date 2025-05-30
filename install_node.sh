@@ -332,6 +332,10 @@ curl -s -X POST $API_URL \\
     "conn_count": '\$CONN_COUNT',
     "bandwidth": '\$BANDWIDTH',
     "api_key": "$API_KEY",
+    "node_name": "$NAME",
+    "host": "$HOST",
+    "port": $PORT,
+    "secret": "$SECRET",
     "user_data": []
   }' > /dev/null
 EOF
@@ -366,6 +370,10 @@ curl -s -X POST $API_URL \\
     "conn_count": '\$CONN_COUNT',
     "bandwidth": '\$BANDWIDTH',
     "api_key": "$API_KEY",
+    "node_name": "$NAME",
+    "host": "$HOST",
+    "port": $PORT,
+    "secret": "$SECRET",
     "user_data": []
   }' > /dev/null
 EOF
