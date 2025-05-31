@@ -103,11 +103,20 @@ uninstall_report_script() {
     # 停止并移除脚本
     echo -e "${GREEN}正在移除上报脚本...${NC}"
     if [ -f "/usr/local/bin/report_status.sh" ]; then
+        # 尝试杀死所有运行中的上报脚本进程
+        pkill -f "report_status.sh" 2>/dev/null || true
         rm -f /usr/local/bin/report_status.sh
         echo -e "上报脚本已移除"
     else
         echo -e "${YELLOW}未找到上报脚本${NC}"
     fi
+    
+    # 清理临时文件
+    echo -e "${GREEN}正在清理临时文件...${NC}"
+    rm -f /tmp/restart_request.tmp
+    rm -f /tmp/last_bandwidth_*.txt
+    rm -f /tmp/last_time_*.txt
+    rm -f /tmp/mtproto_cron
     
     # 询问是否保留日志
     read -p "是否保留状态上报日志? (y/n) [n]: " KEEP_LOG
@@ -122,8 +131,72 @@ uninstall_report_script() {
         echo -e "状态上报日志已保留在 /var/log/mtproto_report.log"
     fi
     
+    # 询问是否卸载MTProto代理
+    read -p "是否卸载MTProto代理服务? (y/n) [n]: " UNINSTALL_PROXY
+    if [[ "$UNINSTALL_PROXY" == "y" || "$UNINSTALL_PROXY" == "Y" ]]; then
+        echo -e "${GREEN}正在卸载MTProto代理...${NC}"
+        
+        # 检查是否使用Docker
+        if command -v docker &> /dev/null && docker ps -a | grep -q "mtproto"; then
+            echo -e "${GREEN}检测到Docker版本的MTProto代理，正在移除...${NC}"
+            # 获取所有MTProto相关容器
+            CONTAINERS=$(docker ps -a | grep mtproto | awk '{print $1}')
+            for CONTAINER in $CONTAINERS; do
+                echo -e "停止并移除容器 $CONTAINER..."
+                docker stop $CONTAINER 2>/dev/null || true
+                docker rm $CONTAINER 2>/dev/null || true
+            done
+            
+            # 询问是否移除Docker镜像
+            read -p "是否移除MTProto代理Docker镜像? (y/n) [n]: " REMOVE_IMAGE
+            if [[ "$REMOVE_IMAGE" == "y" || "$REMOVE_IMAGE" == "Y" ]]; then
+                docker rmi telegrammessenger/proxy:latest 2>/dev/null || true
+                echo -e "Docker镜像已移除"
+            fi
+        else
+            # 检查系统服务
+            if systemctl list-units --type=service | grep -q "mtproto"; then
+                SERVICE_NAME=$(systemctl list-units --type=service | grep mtproto | head -n 1 | awk '{print $1}')
+                echo -e "${GREEN}正在停止并禁用服务 $SERVICE_NAME...${NC}"
+                systemctl stop $SERVICE_NAME 2>/dev/null || true
+                systemctl disable $SERVICE_NAME 2>/dev/null || true
+                
+                # 移除服务文件
+                if [ -f "/etc/systemd/system/$SERVICE_NAME" ]; then
+                    rm -f "/etc/systemd/system/$SERVICE_NAME"
+                    systemctl daemon-reload
+                    echo -e "服务文件已移除"
+                fi
+            fi
+            
+            # 检查进程
+            PID=$(ps -ef | grep "[m]tproto-proxy" | head -n 1 | awk '{print $2}')
+            if [ -n "$PID" ]; then
+                echo -e "${GREEN}正在终止MTProto代理进程...${NC}"
+                kill -15 $PID 2>/dev/null || kill -9 $PID 2>/dev/null || true
+                echo -e "进程已终止"
+            fi
+            
+            # 移除配置文件
+            echo -e "${GREEN}正在移除配置文件...${NC}"
+            rm -f /etc/mtproto-proxy.conf 2>/dev/null || true
+            rm -f /etc/mtpproxy.conf 2>/dev/null || true
+            
+            # 清理日志
+            read -p "是否移除MTProto代理日志? (y/n) [n]: " REMOVE_LOGS
+            if [[ "$REMOVE_LOGS" == "y" || "$REMOVE_LOGS" == "Y" ]]; then
+                rm -f /var/log/mtproto.log 2>/dev/null || true
+                echo -e "代理日志已移除"
+            fi
+        fi
+        
+        echo -e "${GREEN}MTProto代理卸载完成!${NC}"
+    fi
+    
     echo -e "\n${GREEN}卸载完成！状态上报脚本和相关定时任务已移除。${NC}"
-    echo -e "${YELLOW}注意：此操作不会卸载MTProto代理本身，仅移除状态上报功能。${NC}"
+    if [[ "$UNINSTALL_PROXY" != "y" && "$UNINSTALL_PROXY" != "Y" ]]; then
+        echo -e "${YELLOW}注意：此操作不会卸载MTProto代理本身，仅移除状态上报功能。${NC}"
+    fi
     exit 0
 }
 
