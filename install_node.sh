@@ -489,74 +489,82 @@ start_restart_server() {
                 # 重启Docker容器
                 docker restart $CONTAINER_NAME
                 
-                # 获取连接数
-                CONN_COUNT=\$(docker exec $CONTAINER_NAME curl -s http://localhost:$STATS_PORT/stats | grep -oP '(?<="active_users":)[0-9]+')
-                if [ -z "\$CONN_COUNT" ]; then
-                    CONN_COUNT=0
-                fi
-                
-                # 获取流量统计
-                STAT_COMMAND="docker exec $CONTAINER_NAME ss -antp | grep mtproto | grep -v LISTEN"
-                BANDWIDTH=\$(docker exec $CONTAINER_NAME cat /var/log/mtproto.log 2>/dev/null | grep "Written" | awk '{sum+=\$2} END {print sum}')
-                if [ -z "\$BANDWIDTH" ]; then
-                    BANDWIDTH=0
-                fi
-                
-                # 计算实时带宽
-                CURRENT_TIME=\$(date +%s)
-                LAST_BANDWIDTH_FILE="/tmp/last_bandwidth_$NODE_ID.txt"
-                LAST_TIME_FILE="/tmp/last_time_$NODE_ID.txt"
-                
-                if [ -f "\$LAST_BANDWIDTH_FILE" ] && [ -f "\$LAST_TIME_FILE" ]; then
-                    LAST_BANDWIDTH=\$(cat \$LAST_BANDWIDTH_FILE)
-                    LAST_TIME=\$(cat \$LAST_TIME_FILE)
-                    
-                    # 计算带宽差值和时间差
-                    BANDWIDTH_DIFF=\$((\$BANDWIDTH - \$LAST_BANDWIDTH))
-                    TIME_DIFF=\$((\$CURRENT_TIME - \$LAST_TIME))
-                    
-                    if [ \$TIME_DIFF -gt 0 ]; then
-                        # 计算实时带宽 (bytes/s)
-                        REAL_BANDWIDTH=\$((\$BANDWIDTH_DIFF / \$TIME_DIFF))
-                    else
-                        REAL_BANDWIDTH=0
-                    fi
-                else
-                    REAL_BANDWIDTH=0
-                fi
-                
-                # 保存当前数据供下次计算
-                echo "\$BANDWIDTH" > "\$LAST_BANDWIDTH_FILE"
-                echo "\$CURRENT_TIME" > "\$LAST_TIME_FILE"
-                
-                # 当前时间
-                TIMESTAMP=\$(date +"%Y-%m-%d %H:%M:%S")
-                
-                # 记录日志
-                echo "[\$TIMESTAMP] 连接数: \$CONN_COUNT, 总带宽: \$BANDWIDTH bytes, 实时带宽: \$REAL_BANDWIDTH bytes/s" >> /var/log/mtproto_report.log
-                
-                # 发送状态报告
-                curl -s -X POST $API_URL \\
-                  -H "Content-Type: application/json" \\
-                  -d '{
-                    "node_id": '$NODE_ID',
-                    "conn_count": '\$CONN_COUNT',
-                    "bandwidth": '\$BANDWIDTH',
-                    "real_bandwidth": '\$REAL_BANDWIDTH',
-                    "api_key": "'$API_KEY'",
-                    "node_name": "$NAME",
-                    "host": "$HOST",
-                    "port": $PORT,
-                    "secret": "$SECRET",
-                    "user_data": []
-                  }' > /dev/null
+                # 上报状态
+                report_status
             fi
         fi
     done
 }
 
+# 状态上报函数
+report_status() {
+    # 获取连接数
+    CONN_COUNT=\$(docker exec $CONTAINER_NAME curl -s http://localhost:$STATS_PORT/stats 2>/dev/null | grep -oP '(?<="active_users":)[0-9]+' || echo 0)
+    if [ -z "\$CONN_COUNT" ]; then
+        CONN_COUNT=0
+    fi
+    
+    # 获取流量统计
+    BANDWIDTH=\$(docker exec $CONTAINER_NAME cat /var/log/mtproto.log 2>/dev/null | grep "Written" | awk '{sum+=\$2} END {print sum}')
+    if [ -z "\$BANDWIDTH" ]; then
+        BANDWIDTH=0
+    fi
+    
+    # 计算实时带宽
+    CURRENT_TIME=\$(date +%s)
+    LAST_BANDWIDTH_FILE="/tmp/last_bandwidth_$NODE_ID.txt"
+    LAST_TIME_FILE="/tmp/last_time_$NODE_ID.txt"
+    
+    if [ -f "\$LAST_BANDWIDTH_FILE" ] && [ -f "\$LAST_TIME_FILE" ]; then
+        LAST_BANDWIDTH=\$(cat \$LAST_BANDWIDTH_FILE)
+        LAST_TIME=\$(cat \$LAST_TIME_FILE)
+        
+        # 计算带宽差值和时间差
+        BANDWIDTH_DIFF=\$((\$BANDWIDTH - \$LAST_BANDWIDTH))
+        TIME_DIFF=\$((\$CURRENT_TIME - \$LAST_TIME))
+        
+        if [ \$TIME_DIFF -gt 0 ]; then
+            # 计算实时带宽 (bytes/s)
+            REAL_BANDWIDTH=\$((\$BANDWIDTH_DIFF / \$TIME_DIFF))
+        else
+            REAL_BANDWIDTH=0
+        fi
+    else
+        REAL_BANDWIDTH=0
+    fi
+    
+    # 保存当前数据供下次计算
+    echo "\$BANDWIDTH" > "\$LAST_BANDWIDTH_FILE"
+    echo "\$CURRENT_TIME" > "\$LAST_TIME_FILE"
+    
+    # 当前时间
+    TIMESTAMP=\$(date +"%Y-%m-%d %H:%M:%S")
+    
+    # 记录日志
+    echo "[\$TIMESTAMP] 连接数: \$CONN_COUNT, 总带宽: \$BANDWIDTH bytes, 实时带宽: \$REAL_BANDWIDTH bytes/s" >> /var/log/mtproto_report.log
+    
+    # 发送状态报告
+    curl -s -X POST $API_URL \\
+      -H "Content-Type: application/json" \\
+      -d '{
+        "node_id": '$NODE_ID',
+        "conn_count": '\$CONN_COUNT',
+        "bandwidth": '\$BANDWIDTH',
+        "real_bandwidth": '\$REAL_BANDWIDTH',
+        "api_key": "'$API_KEY'",
+        "node_name": "$NAME",
+        "host": "$HOST",
+        "port": $PORT,
+        "secret": "$SECRET",
+        "user_data": []
+      }' > /dev/null
+}
+
 # 后台启动重启服务器
 start_restart_server &
+
+# 执行状态上报
+report_status
 EOF
 else
     # 非Docker版本的上报脚本
@@ -587,74 +595,83 @@ start_restart_server() {
                 # 重启MTProto服务
                 systemctl restart mtproto-proxy
                 
-                # 获取连接数
-                CONN_COUNT=\$(curl -s http://localhost:$STATS_PORT/stats | grep -oP '(?<="active_users":)[0-9]+')
-                if [ -z "\$CONN_COUNT" ]; then
-                    CONN_COUNT=0
-                fi
-                
-                # 获取流量统计
-                STAT_COMMAND="ss -antp | grep mtproto | grep -v LISTEN"
-                BANDWIDTH=\$(cat /var/log/mtproto.log 2>/dev/null | grep "Written" | awk '{sum+=\$2} END {print sum}')
-                if [ -z "\$BANDWIDTH" ]; then
-                    BANDWIDTH=0
-                fi
-                
-                # 计算实时带宽
-                CURRENT_TIME=\$(date +%s)
-                LAST_BANDWIDTH_FILE="/tmp/last_bandwidth_$NODE_ID.txt"
-                LAST_TIME_FILE="/tmp/last_time_$NODE_ID.txt"
-                
-                if [ -f "\$LAST_BANDWIDTH_FILE" ] && [ -f "\$LAST_TIME_FILE" ]; then
-                    LAST_BANDWIDTH=\$(cat \$LAST_BANDWIDTH_FILE)
-                    LAST_TIME=\$(cat \$LAST_TIME_FILE)
-                    
-                    # 计算带宽差值和时间差
-                    BANDWIDTH_DIFF=\$((\$BANDWIDTH - \$LAST_BANDWIDTH))
-                    TIME_DIFF=\$((\$CURRENT_TIME - \$LAST_TIME))
-                    
-                    if [ \$TIME_DIFF -gt 0 ]; then
-                        # 计算实时带宽 (bytes/s)
-                        REAL_BANDWIDTH=\$((\$BANDWIDTH_DIFF / \$TIME_DIFF))
-                    else
-                        REAL_BANDWIDTH=0
-                    fi
-                else
-                    REAL_BANDWIDTH=0
-                fi
-                
-                # 保存当前数据供下次计算
-                echo "\$BANDWIDTH" > "\$LAST_BANDWIDTH_FILE"
-                echo "\$CURRENT_TIME" > "\$LAST_TIME_FILE"
-                
-                # 当前时间
-                TIMESTAMP=\$(date +"%Y-%m-%d %H:%M:%S")
-                
-                # 记录日志
-                echo "[\$TIMESTAMP] 连接数: \$CONN_COUNT, 总带宽: \$BANDWIDTH bytes, 实时带宽: \$REAL_BANDWIDTH bytes/s" >> /var/log/mtproto_report.log
-                
-                # 发送状态报告
-                curl -s -X POST $API_URL \\
-                  -H "Content-Type: application/json" \\
-                  -d '{
-                    "node_id": '$NODE_ID',
-                    "conn_count": '\$CONN_COUNT',
-                    "bandwidth": '\$BANDWIDTH',
-                    "real_bandwidth": '\$REAL_BANDWIDTH',
-                    "api_key": "'$API_KEY'",
-                    "node_name": "$NAME",
-                    "host": "$HOST",
-                    "port": $PORT,
-                    "secret": "$SECRET",
-                    "user_data": []
-                  }' > /dev/null
+                # 上报状态
+                report_status
             fi
         fi
     done
 }
 
+# 状态上报函数
+report_status() {
+    # 获取连接数
+    CONN_COUNT=\$(curl -s http://localhost:$STATS_PORT/stats 2>/dev/null | grep -oP '(?<="active_users":)[0-9]+' || echo 0)
+    if [ -z "\$CONN_COUNT" ]; then
+        # 尝试使用netstat或ss命令获取连接数
+        CONN_COUNT=\$(netstat -tuln | grep -c :$PORT || ss -tuln | grep -c :$PORT || echo 0)
+    fi
+    
+    # 获取流量统计
+    BANDWIDTH=\$(cat /var/log/mtproto.log 2>/dev/null | grep "Written" | awk '{sum+=\$2} END {print sum}')
+    if [ -z "\$BANDWIDTH" ]; then
+        BANDWIDTH=0
+    fi
+    
+    # 计算实时带宽
+    CURRENT_TIME=\$(date +%s)
+    LAST_BANDWIDTH_FILE="/tmp/last_bandwidth_$NODE_ID.txt"
+    LAST_TIME_FILE="/tmp/last_time_$NODE_ID.txt"
+    
+    if [ -f "\$LAST_BANDWIDTH_FILE" ] && [ -f "\$LAST_TIME_FILE" ]; then
+        LAST_BANDWIDTH=\$(cat \$LAST_BANDWIDTH_FILE)
+        LAST_TIME=\$(cat \$LAST_TIME_FILE)
+        
+        # 计算带宽差值和时间差
+        BANDWIDTH_DIFF=\$((\$BANDWIDTH - \$LAST_BANDWIDTH))
+        TIME_DIFF=\$((\$CURRENT_TIME - \$LAST_TIME))
+        
+        if [ \$TIME_DIFF -gt 0 ]; then
+            # 计算实时带宽 (bytes/s)
+            REAL_BANDWIDTH=\$((\$BANDWIDTH_DIFF / \$TIME_DIFF))
+        else
+            REAL_BANDWIDTH=0
+        fi
+    else
+        REAL_BANDWIDTH=0
+    fi
+    
+    # 保存当前数据供下次计算
+    echo "\$BANDWIDTH" > "\$LAST_BANDWIDTH_FILE"
+    echo "\$CURRENT_TIME" > "\$LAST_TIME_FILE"
+    
+    # 当前时间
+    TIMESTAMP=\$(date +"%Y-%m-%d %H:%M:%S")
+    
+    # 记录日志
+    echo "[\$TIMESTAMP] 连接数: \$CONN_COUNT, 总带宽: \$BANDWIDTH bytes, 实时带宽: \$REAL_BANDWIDTH bytes/s" >> /var/log/mtproto_report.log
+    
+    # 发送状态报告
+    curl -s -X POST $API_URL \\
+      -H "Content-Type: application/json" \\
+      -d '{
+        "node_id": '$NODE_ID',
+        "conn_count": '\$CONN_COUNT',
+        "bandwidth": '\$BANDWIDTH',
+        "real_bandwidth": '\$REAL_BANDWIDTH',
+        "api_key": "'$API_KEY'",
+        "node_name": "$NAME",
+        "host": "$HOST",
+        "port": $PORT,
+        "secret": "$SECRET",
+        "user_data": []
+      }' > /dev/null
+}
+
 # 后台启动重启服务器
 start_restart_server &
+
+# 执行状态上报
+report_status
 EOF
 fi
 
