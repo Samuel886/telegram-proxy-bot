@@ -498,17 +498,39 @@ start_restart_server() {
 
 # 状态上报函数
 report_status() {
+    # 调试信息
+    echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 开始获取节点状态..." >> /var/log/mtproto_report.log
+    
     # 获取连接数
+    echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 尝试从stats端口获取连接数..." >> /var/log/mtproto_report.log
     CONN_COUNT=\$(docker exec $CONTAINER_NAME curl -s http://localhost:$STATS_PORT/stats 2>/dev/null | grep -oP '(?<="active_users":)[0-9]+' || echo 0)
-    if [ -z "\$CONN_COUNT" ]; then
-        CONN_COUNT=0
+    if [ -z "\$CONN_COUNT" ] || [ "\$CONN_COUNT" -eq 0 ]; then
+        echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 从stats端口获取连接数失败，尝试使用netstat..." >> /var/log/mtproto_report.log
+        # 尝试使用其他方法获取连接数
+        CONN_COUNT=\$(docker exec $CONTAINER_NAME bash -c "netstat -ant | grep ESTABLISHED | grep -c :443" 2>/dev/null || echo 0)
+        if [ -z "\$CONN_COUNT" ] || [ "\$CONN_COUNT" -eq 0 ]; then
+            echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 使用netstat获取连接数失败，尝试使用ss..." >> /var/log/mtproto_report.log
+            # 再次尝试使用ss命令
+            CONN_COUNT=\$(docker exec $CONTAINER_NAME bash -c "ss -ant | grep ESTABLISHED | grep -c :443" 2>/dev/null || echo 0)
+        fi
+        if [ -z "\$CONN_COUNT" ]; then
+            CONN_COUNT=0
+        fi
     fi
+    echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 最终获取到的连接数: \$CONN_COUNT" >> /var/log/mtproto_report.log
     
     # 获取流量统计
+    echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 尝试从日志获取带宽..." >> /var/log/mtproto_report.log
     BANDWIDTH=\$(docker exec $CONTAINER_NAME cat /var/log/mtproto.log 2>/dev/null | grep "Written" | awk '{sum+=\$2} END {print sum}')
-    if [ -z "\$BANDWIDTH" ]; then
-        BANDWIDTH=0
+    if [ -z "\$BANDWIDTH" ] || [ "\$BANDWIDTH" -eq 0 ]; then
+        echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 从日志获取带宽失败，尝试使用网络接口..." >> /var/log/mtproto_report.log
+        # 尝试使用其他方法获取带宽
+        BANDWIDTH=\$(docker exec $CONTAINER_NAME bash -c "cat /proc/net/dev | grep eth0" 2>/dev/null | awk '{print \$10}')
+        if [ -z "\$BANDWIDTH" ]; then
+            BANDWIDTH=0
+        fi
     fi
+    echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 最终获取到的带宽: \$BANDWIDTH" >> /var/log/mtproto_report.log
     
     # 计算实时带宽
     CURRENT_TIME=\$(date +%s)
@@ -604,18 +626,42 @@ start_restart_server() {
 
 # 状态上报函数
 report_status() {
+    # 调试信息
+    echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 开始获取节点状态..." >> /var/log/mtproto_report.log
+    
     # 获取连接数
+    echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 尝试从stats端口获取连接数..." >> /var/log/mtproto_report.log
     CONN_COUNT=\$(curl -s http://localhost:$STATS_PORT/stats 2>/dev/null | grep -oP '(?<="active_users":)[0-9]+' || echo 0)
-    if [ -z "\$CONN_COUNT" ]; then
+    if [ -z "\$CONN_COUNT" ] || [ "\$CONN_COUNT" -eq 0 ]; then
+        echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 从stats端口获取连接数失败，尝试使用netstat..." >> /var/log/mtproto_report.log
         # 尝试使用netstat或ss命令获取连接数
-        CONN_COUNT=\$(netstat -tuln | grep -c :$PORT || ss -tuln | grep -c :$PORT || echo 0)
+        CONN_COUNT=\$(netstat -ant | grep ESTABLISHED | grep -c :$PORT 2>/dev/null || echo 0)
+        if [ -z "\$CONN_COUNT" ] || [ "\$CONN_COUNT" -eq 0 ]; then
+            echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 使用netstat获取连接数失败，尝试使用ss..." >> /var/log/mtproto_report.log
+            # 再次尝试使用ss命令
+            CONN_COUNT=\$(ss -ant | grep ESTABLISHED | grep -c :$PORT 2>/dev/null || echo 0)
+        fi
+        if [ -z "\$CONN_COUNT" ]; then
+            CONN_COUNT=0
+        fi
     fi
+    echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 最终获取到的连接数: \$CONN_COUNT" >> /var/log/mtproto_report.log
     
     # 获取流量统计
+    echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 尝试从日志获取带宽..." >> /var/log/mtproto_report.log
     BANDWIDTH=\$(cat /var/log/mtproto.log 2>/dev/null | grep "Written" | awk '{sum+=\$2} END {print sum}')
-    if [ -z "\$BANDWIDTH" ]; then
-        BANDWIDTH=0
+    if [ -z "\$BANDWIDTH" ] || [ "\$BANDWIDTH" -eq 0 ]; then
+        echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 从日志获取带宽失败，尝试使用网络接口..." >> /var/log/mtproto_report.log
+        # 尝试使用其他方法获取带宽
+        INTERFACE=\$(ip route | grep default | awk '{print \$5}' | head -n 1)
+        if [ -n "\$INTERFACE" ]; then
+            BANDWIDTH=\$(cat /proc/net/dev | grep "\$INTERFACE" | awk '{print \$10}')
+        fi
+        if [ -z "\$BANDWIDTH" ]; then
+            BANDWIDTH=0
+        fi
     fi
+    echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 最终获取到的带宽: \$BANDWIDTH" >> /var/log/mtproto_report.log
     
     # 计算实时带宽
     CURRENT_TIME=\$(date +%s)
