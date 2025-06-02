@@ -607,30 +607,31 @@ report_status() {
     
     # 计算实时带宽
     CURRENT_TIME=\$(date +%s)
-    LAST_BANDWIDTH_FILE="/tmp/last_bandwidth_$NODE_ID.txt"
-    LAST_TIME_FILE="/tmp/last_time_$NODE_ID.txt"
-    
-    if [ -f "\$LAST_BANDWIDTH_FILE" ] && [ -f "\$LAST_TIME_FILE" ]; then
-        LAST_BANDWIDTH=\$(cat \$LAST_BANDWIDTH_FILE)
-        LAST_TIME=\$(cat \$LAST_TIME_FILE)
-        
-        # 计算带宽差值和时间差
-        BANDWIDTH_DIFF=\$((\$BANDWIDTH - \$LAST_BANDWIDTH))
-        TIME_DIFF=\$((\$CURRENT_TIME - \$LAST_TIME))
-        
-        if [ \$TIME_DIFF -gt 0 ]; then
-            # 计算实时带宽 (bytes/s)
-            REAL_BANDWIDTH=\$((\$BANDWIDTH_DIFF / \$TIME_DIFF))
-        else
-            REAL_BANDWIDTH=0
-        fi
+    N=5
+    HIST_FILE="/tmp/bandwidth_history_$NODE_ID.txt"
+
+    # 追加本次数据
+    echo "$CURRENT_TIME $BANDWIDTH" >> $HIST_FILE
+
+    # 只保留最近N行
+    tail -n $N $HIST_FILE > $HIST_FILE.tmp && mv $HIST_FILE.tmp $HIST_FILE
+
+    # 读取最早和最新
+    FIRST_LINE=$(head -n 1 $HIST_FILE)
+    LAST_LINE=$(tail -n 1 $HIST_FILE)
+    FIRST_TIME=$(echo $FIRST_LINE | awk '{print $1}')
+    FIRST_BW=$(echo $FIRST_LINE | awk '{print $2}')
+    LAST_TIME=$(echo $LAST_LINE | awk '{print $1}')
+    LAST_BW=$(echo $LAST_LINE | awk '{print $2}')
+
+    # 计算平均实时带宽
+    TIME_DIFF=$((LAST_TIME - FIRST_TIME))
+    BW_DIFF=$((LAST_BW - FIRST_BW))
+    if [ $TIME_DIFF -gt 0 ]; then
+        REAL_BANDWIDTH=$((BW_DIFF / TIME_DIFF))
     else
         REAL_BANDWIDTH=0
     fi
-    
-    # 保存当前数据供下次计算
-    echo "\$BANDWIDTH" > "\$LAST_BANDWIDTH_FILE"
-    echo "\$CURRENT_TIME" > "\$LAST_TIME_FILE"
     
     # 当前时间
     TIMESTAMP=\$(date +"%Y-%m-%d %H:%M:%S")
@@ -738,30 +739,31 @@ report_status() {
     
     # 计算实时带宽
     CURRENT_TIME=\$(date +%s)
-    LAST_BANDWIDTH_FILE="/tmp/last_bandwidth_$NODE_ID.txt"
-    LAST_TIME_FILE="/tmp/last_time_$NODE_ID.txt"
-    
-    if [ -f "\$LAST_BANDWIDTH_FILE" ] && [ -f "\$LAST_TIME_FILE" ]; then
-        LAST_BANDWIDTH=\$(cat \$LAST_BANDWIDTH_FILE)
-        LAST_TIME=\$(cat \$LAST_TIME_FILE)
-        
-        # 计算带宽差值和时间差
-        BANDWIDTH_DIFF=\$((\$BANDWIDTH - \$LAST_BANDWIDTH))
-        TIME_DIFF=\$((\$CURRENT_TIME - \$LAST_TIME))
-        
-        if [ \$TIME_DIFF -gt 0 ]; then
-            # 计算实时带宽 (bytes/s)
-            REAL_BANDWIDTH=\$((\$BANDWIDTH_DIFF / \$TIME_DIFF))
-        else
-            REAL_BANDWIDTH=0
-        fi
+    N=5
+    HIST_FILE="/tmp/bandwidth_history_$NODE_ID.txt"
+
+    # 追加本次数据
+    echo "$CURRENT_TIME $BANDWIDTH" >> $HIST_FILE
+
+    # 只保留最近N行
+    tail -n $N $HIST_FILE > $HIST_FILE.tmp && mv $HIST_FILE.tmp $HIST_FILE
+
+    # 读取最早和最新
+    FIRST_LINE=$(head -n 1 $HIST_FILE)
+    LAST_LINE=$(tail -n 1 $HIST_FILE)
+    FIRST_TIME=$(echo $FIRST_LINE | awk '{print $1}')
+    FIRST_BW=$(echo $FIRST_LINE | awk '{print $2}')
+    LAST_TIME=$(echo $LAST_LINE | awk '{print $1}')
+    LAST_BW=$(echo $LAST_LINE | awk '{print $2}')
+
+    # 计算平均实时带宽
+    TIME_DIFF=$((LAST_TIME - FIRST_TIME))
+    BW_DIFF=$((LAST_BW - FIRST_BW))
+    if [ $TIME_DIFF -gt 0 ]; then
+        REAL_BANDWIDTH=$((BW_DIFF / TIME_DIFF))
     else
         REAL_BANDWIDTH=0
     fi
-    
-    # 保存当前数据供下次计算
-    echo "\$BANDWIDTH" > "\$LAST_BANDWIDTH_FILE"
-    echo "\$CURRENT_TIME" > "\$LAST_TIME_FILE"
     
     # 当前时间
     TIMESTAMP=\$(date +"%Y-%m-%d %H:%M:%S")
