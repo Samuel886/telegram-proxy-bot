@@ -1,16 +1,11 @@
-#!/bin/bash
 
-# Telegram MTProto代理节点一键安装脚本
-# 此脚本用于自动安装和配置MTProto代理服务器，或者仅配置状态上报
-
-# 彩色输出
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[0;33m'
 RED='\033[0;31m'
-NC='\033[0m' # 无颜色
+NC='\033[0m' 
 
-# 脚本正文开始前先处理命令行参数
+
 while getopts "r:h" opt; do
   case $opt in
     r)
@@ -31,15 +26,15 @@ while getopts "r:h" opt; do
   esac
 done
 
-# 重启节点函数
+
 restart_node() {
     echo -e "${BLUE}=========================================${NC}"
     echo -e "${GREEN}重启节点${NC}"
     echo -e "${BLUE}=========================================${NC}\n"
     
-    # 检查是否使用Docker
+
     if command -v docker &> /dev/null && docker ps | grep -q "mtproto"; then
-        # Docker版本重启
+
         CONTAINER_NAME=$(docker ps | grep mtproto | head -n 1 | awk '{print $NF}')
         if [ -z "$CONTAINER_NAME" ]; then
             CONTAINER_NAME="mtproto-proxy"
@@ -49,7 +44,7 @@ restart_node() {
         docker restart $CONTAINER_NAME
         echo -e "${GREEN}重启完成！${NC}"
     else
-        # 非Docker版本重启
+
         echo -e "${GREEN}检测系统服务...${NC}"
         if systemctl list-units --type=service | grep -q "mtproto"; then
             SERVICE_NAME=$(systemctl list-units --type=service | grep mtproto | head -n 1 | awk '{print $1}')
@@ -79,7 +74,7 @@ restart_node() {
         fi
     fi
     
-    # 重启上报脚本
+
     if [ -f "/usr/local/bin/report_status.sh" ]; then
         echo -e "${GREEN}正在执行状态上报脚本...${NC}"
         /usr/local/bin/report_status.sh
@@ -90,20 +85,20 @@ restart_node() {
     exit 0
 }
 
-# 卸载上报脚本函数
+
 uninstall_report_script() {
     echo -e "${BLUE}=========================================${NC}"
     echo -e "${GREEN}卸载状态上报脚本${NC}"
     echo -e "${BLUE}=========================================${NC}\n"
     
-    # 移除定时任务
+
     echo -e "${GREEN}正在移除定时任务...${NC}"
     (crontab -l 2>/dev/null | grep -v "report_status.sh") | crontab -
     
-    # 停止并移除脚本
+
     echo -e "${GREEN}正在移除上报脚本...${NC}"
     if [ -f "/usr/local/bin/report_status.sh" ]; then
-        # 尝试杀死所有运行中的上报脚本进程
+
         pkill -f "report_status.sh" 2>/dev/null || true
         rm -f /usr/local/bin/report_status.sh
         echo -e "上报脚本已移除"
@@ -111,14 +106,14 @@ uninstall_report_script() {
         echo -e "${YELLOW}未找到上报脚本${NC}"
     fi
     
-    # 清理临时文件
+
     echo -e "${GREEN}正在清理临时文件...${NC}"
     rm -f /tmp/restart_request.tmp
     rm -f /tmp/last_bandwidth_*.txt
     rm -f /tmp/last_time_*.txt
     rm -f /tmp/mtproto_cron
     
-    # 询问是否保留日志
+
     read -p "是否保留状态上报日志? (y/n) [n]: " KEEP_LOG
     if [[ "$KEEP_LOG" != "y" && "$KEEP_LOG" != "Y" ]]; then
         if [ -f "/var/log/mtproto_report.log" ]; then
@@ -131,12 +126,12 @@ uninstall_report_script() {
         echo -e "状态上报日志已保留在 /var/log/mtproto_report.log"
     fi
     
-    # 询问是否卸载MTProto代理
+
     read -p "是否卸载MTProto代理服务? (y/n) [n]: " UNINSTALL_PROXY
     if [[ "$UNINSTALL_PROXY" == "y" || "$UNINSTALL_PROXY" == "Y" ]]; then
         echo -e "${GREEN}正在卸载MTProto代理...${NC}"
         
-        # 检查是否使用Docker
+
         if command -v docker &> /dev/null && docker ps -a | grep -q "mtproto"; then
             echo -e "${GREEN}检测到Docker版本的MTProto代理，正在移除...${NC}"
             # 获取所有MTProto相关容器
@@ -147,21 +142,21 @@ uninstall_report_script() {
                 docker rm $CONTAINER 2>/dev/null || true
             done
             
-            # 询问是否移除Docker镜像
+
             read -p "是否移除MTProto代理Docker镜像? (y/n) [n]: " REMOVE_IMAGE
             if [[ "$REMOVE_IMAGE" == "y" || "$REMOVE_IMAGE" == "Y" ]]; then
                 docker rmi telegrammessenger/proxy:latest 2>/dev/null || true
                 echo -e "Docker镜像已移除"
             fi
         else
-            # 检查系统服务
+
             if systemctl list-units --type=service | grep -q "mtproto"; then
                 SERVICE_NAME=$(systemctl list-units --type=service | grep mtproto | head -n 1 | awk '{print $1}')
                 echo -e "${GREEN}正在停止并禁用服务 $SERVICE_NAME...${NC}"
                 systemctl stop $SERVICE_NAME 2>/dev/null || true
                 systemctl disable $SERVICE_NAME 2>/dev/null || true
                 
-                # 移除服务文件
+
                 if [ -f "/etc/systemd/system/$SERVICE_NAME" ]; then
                     rm -f "/etc/systemd/system/$SERVICE_NAME"
                     systemctl daemon-reload
@@ -169,7 +164,7 @@ uninstall_report_script() {
                 fi
             fi
             
-            # 检查进程
+
             PID=$(ps -ef | grep "[m]tproto-proxy" | head -n 1 | awk '{print $2}')
             if [ -n "$PID" ]; then
                 echo -e "${GREEN}正在终止MTProto代理进程...${NC}"
@@ -177,12 +172,12 @@ uninstall_report_script() {
                 echo -e "进程已终止"
             fi
             
-            # 移除配置文件
+
             echo -e "${GREEN}正在移除配置文件...${NC}"
             rm -f /etc/mtproto-proxy.conf 2>/dev/null || true
             rm -f /etc/mtpproxy.conf 2>/dev/null || true
             
-            # 清理日志
+
             read -p "是否移除MTProto代理日志? (y/n) [n]: " REMOVE_LOGS
             if [[ "$REMOVE_LOGS" == "y" || "$REMOVE_LOGS" == "Y" ]]; then
                 rm -f /var/log/mtproto.log 2>/dev/null || true
@@ -200,12 +195,12 @@ uninstall_report_script() {
     exit 0
 }
 
-# 打印欢迎信息
+
 echo -e "${BLUE}=========================================${NC}"
 echo -e "${GREEN}Telegram MTProto代理节点配置脚本${NC}"
 echo -e "${BLUE}=========================================${NC}\n"
 
-# 询问操作类型
+
 echo -e "请选择操作:"
 echo -e "1) 全新安装MTProto代理和状态上报脚本"
 echo -e "2) 仅安装状态上报脚本（已有MTProto代理）"
@@ -224,16 +219,16 @@ if [ "$INSTALL_TYPE" != "1" ] && [ "$INSTALL_TYPE" != "2" ]; then
     INSTALL_TYPE="1"
 fi
 
-# 自动检测MTProto代理信息
+
 detect_mtproto() {
     echo -e "${GREEN}正在尝试自动检测MTProto代理信息...${NC}"
     
-    # 检测是否使用Docker运行
+
     if command -v docker &> /dev/null && docker ps | grep -q "mtproto"; then
         echo -e "${GREEN}检测到Docker运行的MTProto代理${NC}"
         USE_DOCKER="y"
         
-        # 尝试获取容器名称
+
         CONTAINER_NAME=$(docker ps | grep mtproto | head -n 1 | awk '{print $NF}')
         if [ -z "$CONTAINER_NAME" ]; then
             CONTAINER_NAME="mtproto-proxy"
@@ -241,64 +236,64 @@ detect_mtproto() {
             echo -e "检测到容器名称: ${YELLOW}$CONTAINER_NAME${NC}"
         fi
         
-        # 尝试获取端口信息
+
         PORT_INFO=$(docker port "$CONTAINER_NAME" | grep -oP '\d+$' | head -n 1)
         if [ -n "$PORT_INFO" ]; then
             PORT=$PORT_INFO
             echo -e "检测到端口: ${YELLOW}$PORT${NC}"
         fi
         
-        # 尝试获取密钥
+
         DOCKER_ENV=$(docker inspect "$CONTAINER_NAME" | grep -oP '(?<="SECRET=)[^"]+')
         if [ -n "$DOCKER_ENV" ]; then
             SECRET=$DOCKER_ENV
             echo -e "检测到密钥: ${YELLOW}$SECRET${NC}"
         fi
         
-        # 设置默认stats端口
+
         STATS_PORT="2398"
         return 0
     fi
     
-    # 检测直接进程运行的MTProto代理
+
     if ps -ef | grep -q "[m]tproto-proxy"; then
         echo -e "${GREEN}检测到直接进程运行的MTProto代理${NC}"
         USE_DOCKER="n"
         
-        # 获取进程命令行
+
         PROCESS_CMD=$(ps -ef | grep "[m]tproto-proxy" | head -n 1)
         echo -e "检测到进程: ${YELLOW}$(echo $PROCESS_CMD | awk '{print $8" "$9" ..."}')${NC}"
         
-        # 尝试提取端口 (-H 参数)
+
         PORT=$(echo "$PROCESS_CMD" | grep -oP -- "-H\s+\K\d+")
         if [ -n "$PORT" ]; then
             echo -e "检测到端口: ${YELLOW}$PORT${NC}"
         else
-            # 尝试提取端口 (-p 参数)
+
             PORT=$(echo "$PROCESS_CMD" | grep -oP -- "-p\s+\K\d+")
             if [ -n "$PORT" ]; then
                 echo -e "检测到端口: ${YELLOW}$PORT${NC}"
             fi
         fi
         
-        # 尝试提取密钥 (-S 参数)
+
         SECRET=$(echo "$PROCESS_CMD" | grep -oP -- "-S\s+\K[a-zA-Z0-9]+")
         if [ -n "$SECRET" ]; then
             echo -e "检测到基本密钥: ${YELLOW}$SECRET${NC}"
             
-            # 提取域名参数，可能用于构建完整密钥
+
             DOMAIN=$(echo "$PROCESS_CMD" | grep -oP -- "--domain\s+\K[a-zA-Z0-9.-]+")
             if [ -n "$DOMAIN" ]; then
                 echo -e "检测到伪装域名: ${YELLOW}$DOMAIN${NC}"
                 
-                # 检查是否需要在密钥前添加'ee'
+
                 if [[ "$SECRET" != ee* ]]; then
                     SECRET_START="ee"
                 else
                     SECRET_START=""
                 fi
                 
-                # 将域名转换为十六进制并附加到密钥
+
                 if command -v xxd &> /dev/null; then
                     DOMAIN_HEX=$(echo -n "$DOMAIN" | xxd -p | tr -d '\n')
                     FULL_SECRET="${SECRET_START}${SECRET}${DOMAIN_HEX}"
@@ -307,7 +302,7 @@ detect_mtproto() {
                 fi
             fi
         else
-            # 尝试从文件或环境中提取密钥
+
             for CONFIG_FILE in /etc/mtproto-proxy.conf /etc/mtproxy.conf $(find /etc -name "*mtpro*" -type f 2>/dev/null); do
                 if [ -f "$CONFIG_FILE" ]; then
                     FILE_SECRET=$(grep -oP '(?<=SECRET=|secret=)[a-zA-Z0-9]+' "$CONFIG_FILE")
@@ -320,23 +315,23 @@ detect_mtproto() {
             done
         fi
         
-        # 设置状态获取命令
+
         STATUS_CMD="netstat -tuln | grep -c :$PORT || ss -tuln | grep -c :$PORT"
         BANDWIDTH_CMD="echo 0"
         
         return 0
     fi
     
-    # 检测systemd服务
+
     if systemctl list-units --type=service | grep -q "mtproto"; then
         echo -e "${GREEN}检测到系统服务运行的MTProto代理${NC}"
         USE_DOCKER="n"
         
-        # 获取服务名称
+
         SERVICE_NAME=$(systemctl list-units --type=service | grep mtproto | head -n 1 | awk '{print $1}')
         echo -e "检测到服务: ${YELLOW}$SERVICE_NAME${NC}"
         
-        # 尝试从配置文件获取端口和密钥
+
         if [ -f "/etc/mtproto-proxy.conf" ]; then
             PORT=$(grep -oP '(?<=PORT=)\d+' /etc/mtproto-proxy.conf)
             SECRET=$(grep -oP '(?<=SECRET=)[a-zA-Z0-9]+' /etc/mtproto-proxy.conf)
@@ -350,56 +345,56 @@ detect_mtproto() {
             fi
         fi
         
-        # 设置状态获取命令
+
         STATUS_CMD="netstat -tuln | grep -c :$PORT || ss -tuln | grep -c :$PORT"
         BANDWIDTH_CMD="echo 0"
         
         return 0
     fi
     
-    # 如果找不到MTProto代理
+
     echo -e "${YELLOW}未能自动检测到MTProto代理信息，请手动输入${NC}"
     return 1
 }
 
-# 自动获取系统信息
+
 HOST=$(curl -s ifconfig.me)
 PORT=443
 SECRET=$(head -c 16 /dev/urandom | xxd -ps)
 
-# 交互式询问必要信息
+
 echo -e "请输入以下信息（如不确定，请咨询您的机器人管理员）\n"
 
-# 节点名称
+
 read -p "节点名称 [默认节点]: " NAME
 NAME=${NAME:-"默认节点"}
 
-# API密钥
+
 read -p "API密钥 (必填): " API_KEY
 while [ -z "$API_KEY" ]; do
     echo -e "${RED}API密钥不能为空!${NC}"
     read -p "API密钥 (必填): " API_KEY
 done
 
-# Bot API地址
+
 read -p "Bot API地址 (例如 http://your-bot-domain:8080/api/report): " API_URL
 while [ -z "$API_URL" ]; do
     echo -e "${RED}Bot API地址不能为空!${NC}"
     read -p "Bot API地址 (例如 http://your-bot-domain:8080/api/report): " API_URL
 done
 
-# 节点ID
+
 read -p "节点ID [0]: " NODE_ID
 NODE_ID=${NODE_ID:-0}
 
-# 如果是仅安装上报脚本，需要手动输入MTProto配置
+
 if [ "$INSTALL_TYPE" = "2" ]; then
     echo -e "\n请输入您现有MTProto代理的信息:"
     
-    # 尝试自动检测MTProto信息
+
     detect_mtproto
     
-    # 如果未提供PORT或SECRET，则请求用户输入
+
     if [ -z "$PORT" ]; then
         read -p "MTProto端口 [443]: " PORT
         PORT=${PORT:-443}
@@ -430,7 +425,7 @@ if [ "$INSTALL_TYPE" = "2" ]; then
         fi
     fi
     
-    # 询问Docker和Stats端口
+
     if [ -z "$USE_DOCKER" ]; then
         read -p "是否使用Docker运行MTProto代理? (y/n) [y]: " USE_DOCKER
         USE_DOCKER=${USE_DOCKER:-y}
@@ -465,7 +460,7 @@ if [ "$INSTALL_TYPE" = "2" ]; then
     fi
 fi
 
-# 上报频率(分钟)
+
 read -p "状态上报频率(分钟) [1]: " REPORT_INTERVAL
 REPORT_INTERVAL=${REPORT_INTERVAL:-1}
 
@@ -484,23 +479,23 @@ echo -e "节点ID: ${YELLOW}$NODE_ID${NC}"
 echo -e "状态上报频率: ${YELLOW}每${REPORT_INTERVAL}分钟${NC}"
 echo -e "${BLUE}=========================================${NC}\n"
 
-# 确认安装
+
 read -p "确认安装? (y/n): " CONFIRM
 if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
     echo -e "${RED}安装已取消${NC}"
     exit 1
 fi
 
-# 安装依赖
+
 echo -e "\n${GREEN}正在安装依赖...${NC}"
 apt-get update
 apt-get install -y curl wget
 
-# 如果选择全新安装，则安装Docker和MTProto代理
+
 if [ "$INSTALL_TYPE" = "1" ]; then
     apt-get install -y build-essential git
     
-    # 安装Docker（如果尚未安装）
+
     if ! command -v docker &> /dev/null; then
         echo -e "\n${GREEN}正在安装Docker...${NC}"
         curl -fsSL https://get.docker.com -o get-docker.sh
@@ -509,81 +504,81 @@ if [ "$INSTALL_TYPE" = "1" ]; then
         systemctl start docker
     fi
 
-    # 拉取MTProto代理镜像
+
     echo -e "\n${GREEN}正在拉取MTProto代理镜像...${NC}"
     docker pull telegrammessenger/proxy:latest
 
-    # 停止并移除旧容器（如果存在）
+
     docker stop mtproto-proxy &>/dev/null || true
     docker rm mtproto-proxy &>/dev/null || true
 
-    # 启动MTProto代理容器
+
     echo -e "\n${GREEN}正在启动MTProto代理...${NC}"
     docker run -d --name mtproto-proxy --restart always -p $PORT:443 \
         -e SECRET=$SECRET \
         -e TAG=dcfd5cbcf7f916c0 \
         telegrammessenger/proxy:latest
         
-    # 设置Docker相关变量，用于上报脚本
+
     USE_DOCKER="y"
     CONTAINER_NAME="mtproto-proxy"
     STATS_PORT="2398"
 fi
 
-# 创建上报脚本
+
 echo -e "\n${GREEN}正在创建状态上报脚本...${NC}"
 
 if [[ "$USE_DOCKER" == "y" || "$USE_DOCKER" == "Y" ]]; then
-    # Docker版本的上报脚本
+
     cat > /usr/local/bin/report_status.sh << EOF
 #!/bin/bash
 
-# 设置API密钥和节点ID
+
 API_KEY="$API_KEY"
 NODE_ID=$NODE_ID
 
-# 创建重启API服务器
+
 start_restart_server() {
-    # 检查是否已经有服务器在运行
+
     if netstat -tuln | grep -q ':8080'; then
         return
     fi
     
-    # 创建简单的重启监听服务
+
     while true; do
         echo -e "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"success\"}" | nc -l -p 8080 > /tmp/restart_request.tmp
         
-        # 检查请求是否包含重启命令
+
         if grep -q "restart" /tmp/restart_request.tmp; then
-            # 验证API密钥
+
             if grep -q "\\"api_key\\":\\"$API_KEY\\"" /tmp/restart_request.tmp; then
                 echo "收到重启命令，正在重启..."
                 
-                # 重启Docker容器
+
                 docker restart $CONTAINER_NAME
                 
-                # 上报状态
+
                 report_status
             fi
         fi
     done
 }
 
-# 状态上报函数
+
 report_status() {
-    # 调试信息
+
     echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 开始获取节点状态..." >> /var/log/mtproto_report.log
     
-    # 获取连接数
+
     echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 尝试从stats端口获取连接数..." >> /var/log/mtproto_report.log
     CONN_COUNT=\$(docker exec $CONTAINER_NAME curl -s http://localhost:$STATS_PORT/stats 2>/dev/null | grep -oP '(?<="active_users":)[0-9]+' || echo 0)
     if [ -z "\$CONN_COUNT" ] || [ "\$CONN_COUNT" -eq 0 ]; then
         echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 从stats端口获取连接数失败，尝试使用netstat..." >> /var/log/mtproto_report.log
-        # 尝试使用其他方法获取连接数
+
         CONN_COUNT=\$(docker exec $CONTAINER_NAME bash -c "netstat -ant | grep ESTABLISHED | grep -c :443" 2>/dev/null || echo 0)
         if [ -z "\$CONN_COUNT" ] || [ "\$CONN_COUNT" -eq 0 ]; then
             echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 使用netstat获取连接数失败，尝试使用ss..." >> /var/log/mtproto_report.log
-            # 再次尝试使用ss命令
+
             CONN_COUNT=\$(docker exec $CONTAINER_NAME bash -c "ss -ant | grep ESTABLISHED | grep -c :443" 2>/dev/null || echo 0)
         fi
         if [ -z "\$CONN_COUNT" ]; then
@@ -592,7 +587,7 @@ report_status() {
     fi
     echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 最终获取到的连接数: \$CONN_COUNT" >> /var/log/mtproto_report.log
     
-    # 获取流量统计
+
     echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 尝试从日志获取带宽..." >> /var/log/mtproto_report.log
     BANDWIDTH=\$(docker exec $CONTAINER_NAME cat /var/log/mtproto.log 2>/dev/null | grep "Written" | awk '{sum+=\$2} END {print sum}')
     if [ -z "\$BANDWIDTH" ] || [ "\$BANDWIDTH" -eq 0 ]; then
@@ -605,7 +600,7 @@ report_status() {
     fi
     echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 最终获取到的带宽: \$BANDWIDTH" >> /var/log/mtproto_report.log
     
-    # 计算实时带宽
+
     CURRENT_TIME=\$(date +%s)
     LAST_BANDWIDTH_FILE="/tmp/last_bandwidth_$NODE_ID.txt"
     LAST_TIME_FILE="/tmp/last_time_$NODE_ID.txt"
@@ -614,7 +609,7 @@ report_status() {
         LAST_BANDWIDTH=\$(cat \$LAST_BANDWIDTH_FILE)
         LAST_TIME=\$(cat \$LAST_TIME_FILE)
         
-        # 计算带宽差值和时间差
+
         BANDWIDTH_DIFF=\$((\$BANDWIDTH - \$LAST_BANDWIDTH))
         TIME_DIFF=\$((\$CURRENT_TIME - \$LAST_TIME))
         
@@ -628,17 +623,17 @@ report_status() {
         REAL_BANDWIDTH=0
     fi
     
-    # 保存当前数据供下次计算
+
     echo "\$BANDWIDTH" > "\$LAST_BANDWIDTH_FILE"
     echo "\$CURRENT_TIME" > "\$LAST_TIME_FILE"
     
-    # 当前时间
+
     TIMESTAMP=\$(date +"%Y-%m-%d %H:%M:%S")
     
-    # 记录日志
+
     echo "[\$TIMESTAMP] 连接数: \$CONN_COUNT, 总带宽: \$BANDWIDTH bytes, 实时带宽: \$REAL_BANDWIDTH bytes/s" >> /var/log/mtproto_report.log
     
-    # 发送状态报告
+
     curl -s -X POST $API_URL \\
       -H "Content-Type: application/json" \\
       -d '{
@@ -655,54 +650,54 @@ report_status() {
       }' > /dev/null
 }
 
-# 后台启动重启服务器
+
 start_restart_server &
 
-# 执行状态上报
+
 report_status
 EOF
 else
-    # 非Docker版本的上报脚本
+
     cat > /usr/local/bin/report_status.sh << EOF
 #!/bin/bash
 
-# 设置API密钥和节点ID
+
 API_KEY="$API_KEY"
 NODE_ID=$NODE_ID
 
-# 创建重启API服务器
+
 start_restart_server() {
-    # 检查是否已经有服务器在运行
+
     if netstat -tuln | grep -q ':8080'; then
         return
     fi
     
-    # 创建简单的重启监听服务
+
     while true; do
         echo -e "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"success\"}" | nc -l -p 8080 > /tmp/restart_request.tmp
         
-        # 检查请求是否包含重启命令
+
         if grep -q "restart" /tmp/restart_request.tmp; then
-            # 验证API密钥
+
             if grep -q "\\"api_key\\":\\"$API_KEY\\"" /tmp/restart_request.tmp; then
                 echo "收到重启命令，正在重启..."
                 
-                # 重启MTProto服务
+
                 systemctl restart mtproto-proxy
                 
-                # 上报状态
+
                 report_status
             fi
         fi
     done
 }
 
-# 状态上报函数
+
 report_status() {
-    # 调试信息
+
     echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 开始获取节点状态..." >> /var/log/mtproto_report.log
     
-    # 获取连接数
+
     echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 尝试从stats端口获取连接数..." >> /var/log/mtproto_report.log
     CONN_COUNT=\$(curl -s http://localhost:$STATS_PORT/stats 2>/dev/null | grep -oP '(?<="active_users":)[0-9]+' || echo 0)
     if [ -z "\$CONN_COUNT" ] || [ "\$CONN_COUNT" -eq 0 ]; then
@@ -720,7 +715,7 @@ report_status() {
     fi
     echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 最终获取到的连接数: \$CONN_COUNT" >> /var/log/mtproto_report.log
     
-    # 获取流量统计
+
     echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 尝试从日志获取带宽..." >> /var/log/mtproto_report.log
     BANDWIDTH=\$(cat /var/log/mtproto.log 2>/dev/null | grep "Written" | awk '{sum+=\$2} END {print sum}')
     if [ -z "\$BANDWIDTH" ] || [ "\$BANDWIDTH" -eq 0 ]; then
@@ -736,7 +731,7 @@ report_status() {
     fi
     echo "[\$(date +"%Y-%m-%d %H:%M:%S")] 最终获取到的带宽: \$BANDWIDTH" >> /var/log/mtproto_report.log
     
-    # 计算实时带宽
+
     CURRENT_TIME=\$(date +%s)
     LAST_BANDWIDTH_FILE="/tmp/last_bandwidth_$NODE_ID.txt"
     LAST_TIME_FILE="/tmp/last_time_$NODE_ID.txt"
@@ -745,7 +740,7 @@ report_status() {
         LAST_BANDWIDTH=\$(cat \$LAST_BANDWIDTH_FILE)
         LAST_TIME=\$(cat \$LAST_TIME_FILE)
         
-        # 计算带宽差值和时间差
+
         BANDWIDTH_DIFF=\$((\$BANDWIDTH - \$LAST_BANDWIDTH))
         TIME_DIFF=\$((\$CURRENT_TIME - \$LAST_TIME))
         
@@ -759,17 +754,17 @@ report_status() {
         REAL_BANDWIDTH=0
     fi
     
-    # 保存当前数据供下次计算
+
     echo "\$BANDWIDTH" > "\$LAST_BANDWIDTH_FILE"
     echo "\$CURRENT_TIME" > "\$LAST_TIME_FILE"
     
-    # 当前时间
+
     TIMESTAMP=\$(date +"%Y-%m-%d %H:%M:%S")
     
-    # 记录日志
+
     echo "[\$TIMESTAMP] 连接数: \$CONN_COUNT, 总带宽: \$BANDWIDTH bytes, 实时带宽: \$REAL_BANDWIDTH bytes/s" >> /var/log/mtproto_report.log
     
-    # 发送状态报告
+
     curl -s -X POST $API_URL \\
       -H "Content-Type: application/json" \\
       -d '{
@@ -786,27 +781,27 @@ report_status() {
       }' > /dev/null
 }
 
-# 后台启动重启服务器
+
 start_restart_server &
 
-# 执行状态上报
+
 report_status
 EOF
 fi
 
-# 设置脚本权限
+
 chmod +x /usr/local/bin/report_status.sh
 
-# 创建日志文件
+
 touch /var/log/mtproto_report.log
 chmod 666 /var/log/mtproto_report.log
 
-# 创建定时任务
+
 echo -e "\n${GREEN}正在设置定时任务...${NC}"
 CRON_EXPR="*/$REPORT_INTERVAL * * * *"
 (crontab -l 2>/dev/null | grep -v "report_status.sh"; echo "$CRON_EXPR /usr/local/bin/report_status.sh") | crontab -
 
-# 生成Telegram代理链接
+
 PROXY_URL="tg://proxy?server=$HOST&port=$PORT&secret=$SECRET"
 
 echo -e "\n${BLUE}=========================================${NC}"
@@ -827,12 +822,12 @@ echo -e "${BLUE}=========================================${NC}"
 echo -e "复制下面的链接到Telegram中即可使用代理:"
 echo -e "${YELLOW}$PROXY_URL${NC}\n"
 
-# 测试上报脚本
+
 echo -e "${GREEN}正在测试状态上报脚本...${NC}"
 /usr/local/bin/report_status.sh
 echo -e "${GREEN}上报脚本已运行，请检查/var/log/mtproto_report.log文件查看详情${NC}"
 
-# 测试连接
+
 echo -e "${GREEN}正在测试与Bot API的连接...${NC}"
 TEST_RESULT=$(curl -s -X POST "$API_URL" \
   -H "Content-Type: application/json" \
@@ -856,19 +851,19 @@ else
     echo -e "错误信息: $TEST_RESULT"
 fi
 
-# 创建cron任务，每分钟运行一次
+
 echo "* * * * * /usr/local/bin/report_status.sh" > /tmp/mtproto_cron
 crontab /tmp/mtproto_cron
 rm /tmp/mtproto_cron
 
-# 设置日志文件权限
+
 touch /var/log/mtproto_report.log
 chmod 644 /var/log/mtproto_report.log
 
 echo -e "\n${GREEN}状态上报脚本创建成功！${NC}"
 echo -e "每分钟将自动上报节点状态。\n"
 
-# 显示连接信息
+
 echo -e "\n${GREEN}MTProto Proxy 已成功安装！${NC}"
 echo -e "代理信息如下：\n"
 echo -e "服务器地址: ${YELLOW}$HOST${NC}"
@@ -876,7 +871,7 @@ echo -e "端口: ${YELLOW}$PORT${NC}"
 echo -e "密钥: ${YELLOW}$SECRET${NC}"
 echo -e "链接: ${YELLOW}https://t.me/proxy?server=$HOST&port=$PORT&secret=$SECRET${NC}\n"
 
-# 如果是Docker安装，显示Docker命令
+
 if [[ "$USE_DOCKER" == "y" || "$USE_DOCKER" == "Y" ]]; then
     echo -e "Docker 容器名称: ${YELLOW}$CONTAINER_NAME${NC}"
     echo -e "查看日志: ${YELLOW}docker logs $CONTAINER_NAME${NC}"
