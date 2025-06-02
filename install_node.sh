@@ -535,7 +535,7 @@ echo -e "\n${GREEN}正在创建状态上报脚本...${NC}"
 
 if [[ "$USE_DOCKER" == "y" || "$USE_DOCKER" == "Y" ]]; then
     # Docker版本的上报脚本
-    cat > /usr/local/bin/report_status.sh << EOF
+    cat > /tmp/report_status.sh << EOF
 #!/bin/bash
 
 # 设置API密钥和节点ID
@@ -662,9 +662,11 @@ start_restart_server &
 # 执行状态上报
 report_status
 EOF
+    mv /tmp/report_status.sh /usr/local/bin/report_status.sh
+    chmod +x /usr/local/bin/report_status.sh
 else
     # 非Docker版本的上报脚本
-    cat > /usr/local/bin/report_status.sh << EOF
+    cat > /tmp/report_status.sh << EOF
 #!/bin/bash
 
 # 设置API密钥和节点ID
@@ -794,10 +796,9 @@ start_restart_server &
 # 执行状态上报
 report_status
 EOF
+    mv /tmp/report_status.sh /usr/local/bin/report_status.sh
+    chmod +x /usr/local/bin/report_status.sh
 fi
-
-# 设置脚本权限
-chmod +x /usr/local/bin/report_status.sh
 
 # 创建日志文件
 touch /var/log/mtproto_report.log
