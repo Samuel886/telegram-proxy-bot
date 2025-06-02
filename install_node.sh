@@ -535,6 +535,7 @@ echo -e "\n${GREEN}正在创建状态上报脚本...${NC}"
 
 if [[ "$USE_DOCKER" == "y" || "$USE_DOCKER" == "Y" ]]; then
     # Docker版本的上报脚本
+    echo "DEBUG: cat开始"
     cat > /tmp/report_status.sh << EOF
 #!/bin/bash
 
@@ -662,8 +663,13 @@ start_restart_server &
 # 执行状态上报
 report_status
 EOF
+    echo "DEBUG: cat已写入"
+    echo "DEBUG: mv开始"
     mv /tmp/report_status.sh /usr/local/bin/report_status.sh
+    echo "DEBUG: mv已完成"
+    echo "DEBUG: chmod开始"
     chmod +x /usr/local/bin/report_status.sh
+    echo "DEBUG: chmod已完成"
 else
     # 非Docker版本的上报脚本
     cat > /tmp/report_status.sh << EOF
